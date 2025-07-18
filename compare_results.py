@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
 """
-Qwen3-Reranker Comparison Script
-Compares results from Ollama and Official implementations
-Can run tests or load existing results
+Qwen3-Reranker Comparison Test Suite
+===================================
+
+Compares Ollama and official Qwen3-Reranker implementations side-by-side.
+This comparison revealed the fundamental differences between the implementations
+and led to the discovery of the correct approach.
+
+Key Discovery: The huge differences were due to Ollama using text generation
+with numeric parsing, while the official implementation uses binary classification
+with logit probabilities.
+
+Usage:
+    python compare_results.py
+
+Results:
+    - Saves detailed comparison to results/comparison_results.json
+    - Shows ranking matches and score similarities
+    - Highlights implementation differences
 """
 
 import json

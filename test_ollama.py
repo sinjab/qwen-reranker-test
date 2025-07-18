@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 """
 Ollama Qwen3-Reranker Test
-Tests Ollama's implementation of Qwen3-Reranker
+=========================
+
+Tests Ollama's implementation of Qwen3-Reranker against standard test cases.
+Used to validate the corrected implementation and compare with official results.
+
+This script helped identify that the original Ollama implementation was using
+text generation instead of the correct binary classification approach.
+
+Usage:
+    python test_ollama.py
+
+Environment Variables:
+    MODEL_NAME: Override default model name (default: qwen_reranker_v2)
 """
 
 import json

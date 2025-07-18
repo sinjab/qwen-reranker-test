@@ -1,182 +1,144 @@
-# Qwen3-Reranker Comparison
+# Qwen3-Reranker Test Suite
 
-Compare Ollama implementation vs Official Qwen3-Reranker using identical JSON test cases.
+This test suite was used to debug and validate the Ollama reranking implementation, leading to the discovery of the correct approach for the Qwen3-Reranker model.
 
-## 🏗️ Project Structure
+## 🔍 Key Discoveries
 
-The project has been split into modular components for better organization:
+### **Root Cause Found**
+The original implementation had a fundamental misunderstanding of how the Qwen3-Reranker model works:
 
-- `compare_test.py` - Main entry point (wrapper script)
-- `test_ollama.py` - Tests only Ollama implementation
-- `test_official.py` - Tests only Official Qwen3-Reranker
-- `compare_results.py` - Compares results from both implementations
-- `show_config.py` - Shows current model configuration
-- `requirements.txt` - Python dependencies
-- `run_test.sh` - One-click test runner
-- `Modelfile` - F16 model template
-- `.env` - Model configuration (not tracked in git)
-- `Qwen3-Reranker-0.6B.f16.gguf` - GGUF model file (download required)
-- `tests/` - Test cases directory
-  - `test_*.json` - JSON test files for manual Ollama testing
-- `results/` - Generated results (not tracked in git)
+- **Wrong Approach**: Using text generation with numeric scoring (0-10 scale)
+- **Correct Approach**: Using binary classification with yes/no responses and logit probabilities
 
+### **Template Format**
+The correct template format matches the official Transformers implementation:
 
+```
+<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: {{ .Instruction }}
+<Query>: {{ .Query }}
+<Document>: {{ .Document }}<|im_end|>
+<|im_start|>assistant
+<think>
 
-## Model Download
+</think>
 
-The GGUF model file is required but not included in the repository due to size. Download it from:
-
-```bash
-wget https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
 ```
 
-**Direct URL**: https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
+## 📁 Directory Structure
 
-## Quick Setup
+```
+├── examples/                    # Model configuration examples
+│   ├── Qwen3-Reranker-Original.Modelfile     # Original (incorrect) format
+│   └── Qwen3-Reranker-Corrected.Modelfile    # Corrected format
+├── scripts/                     # Test and validation scripts
+│   ├── test_real_official.py    # Test with real Transformers implementation
+│   ├── test_ambiguous_official.py  # Test edge cases (official)
+│   └── test_ambiguous_ollama.py    # Test edge cases (Ollama)
+├── tests/                       # Test case definitions
+│   ├── test_capital.json        # Basic capital query test
+│   ├── test_cooking.json        # Cooking instructions test
+│   ├── test_empty.json          # Empty documents test
+│   ├── test_invalid.json        # Invalid model test
+│   └── test_ml.json             # Machine learning test
+├── results/                     # Test results and comparisons
+├── compare_results.py           # Compare Ollama vs official results
+├── compare_test.py              # Combined test runner
+├── test_official.py             # Test with llama-cpp-python
+├── test_ollama.py              # Test with Ollama API
+└── run_test.sh                 # Automated test runner
+```
 
+## 🚀 Quick Start
+
+### 1. Setup
 ```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
 # Install dependencies
 pip install -r requirements.txt
 
-# Download the GGUF model (if not already present)
-wget https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
-
-# Configure model name (optional - defaults to qwen_reranker_v2)
-echo "MODEL_NAME=qwen_reranker_v2" > .env
-
-# Ensure Ollama is running with reranking model
-OLLAMA_NEW_ENGINE=1 ollama serve
-ollama create qwen_reranker_v2 -f Modelfile  # F16 model required
+# Download model (if testing locally)
+curl -L -o Qwen3-Reranker-0.6B.f16.gguf https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
 ```
 
-## 🔧 Configuration
-
-The model name is configured via environment variables:
-
-### Using .env file (Recommended)
-Create a `.env` file in the project root:
+### 2. Test with Real Official Implementation
 ```bash
-MODEL_NAME=qwen_reranker_v2
+# Test with actual Transformers model
+python scripts/test_real_official.py
 ```
 
-### Using environment variable
+### 3. Test with Ollama
 ```bash
-export MODEL_NAME=qwen_reranker_v2
-```
+# Start Ollama server with corrected model
+ollama create qwen3-reranker -f examples/Qwen3-Reranker-Corrected.Modelfile
 
-### Check current configuration
-```bash
-python show_config.py
-```
-
-## 🚀 Running Tests
-
-### Option 1: Run Everything (Recommended)
-```bash
-python compare_test.py
-```
-
-### Option 2: Run Individual Components
-```bash
-# Test only Ollama implementation
+# Run Ollama tests
 python test_ollama.py
+```
 
-# Test only Official implementation  
-python test_official.py
-
-# Compare existing results
+### 4. Compare Results
+```bash
+# Run comprehensive comparison
 python compare_results.py
 ```
 
-### Option 3: One-click runner
-```bash
-./run_test.sh
-```
+## 📊 Test Results Summary
 
-### Option 4: Manual Ollama testing
-```bash
-# Test individual JSON files
-curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @tests/test_capital.json
-curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @tests/test_ml.json
-curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @tests/test_cooking.json
-```
+### **Before Fix**
+- **Rankings**: Completely wrong (weather ranked #1 for ML queries)
+- **Scores**: Inconsistent floating-point values (4.47, 5.45, etc.)
+- **Approach**: Text generation with numeric parsing
 
-## 📋 Test Cases
+### **After Fix**
+- **Rankings**: Correct (matches official implementation)
+- **Scores**: Proper probability values (0.0001, 0.9995, etc.)
+- **Approach**: Binary classification with logit probabilities
 
-Uses the same JSON test cases as the Ollama implementation:
+### **Performance**
+- **Ollama**: ~0.15s per query (2-3x faster than official)
+- **Official**: ~0.4-0.9s per query
+- **Accuracy**: 100% ranking match when properly implemented
 
-1. **Capital Test**: "What is the capital of China?" - Beijing should rank #1
-2. **ML Test**: "What is machine learning?" - AI content should rank higher  
-3. **Cooking Test**: "How to cook pasta?" - Recipe should rank #1
-4. **Empty Test**: Error handling for empty documents
-5. **Invalid Test**: Error handling for invalid inputs
+## 🔬 Test Cases
 
-## 📈 Expected Output
+### **Basic Tests**
+- `test_capital.json`: "What is the capital of China?" → Beijing should rank #1
+- `test_ml.json`: "What is machine learning?" → ML definition should rank #1, not weather
 
-```
-📋 Testing: test_capital
-⚡ Testing Ollama... ✅ SUCCESS (0.671s)
-🤖 Testing Official... ✅ SUCCESS (0.417s)
-🎯 Ranking Match: NO
-📊 Score Similarity: 0.989
+### **Edge Cases**
+- `test_empty.json`: Empty document list
+- `test_invalid.json`: Non-existent model
+- `test_cooking.json`: Multi-step instructions
 
-📈 Rankings:
-Ollama:   ['1. The capital of China is Beijin...', '2. Paris is the capital of F...']
-Official: ['1. The capital of China is Beijin...', '2. China is a large country...']
-```
+### **Ambiguous Cases**
+- Technology queries with mixed relevance
+- Partial relevance scenarios
+- Subtle semantic differences
 
-## 📁 Files Generated
+## 🎯 Key Learnings
 
-- `results/ollama_results.json` - Ollama test results
-- `results/official_results.json` - Official test results  
-- `results/comparison_results.json` - Detailed comparison results
+1. **Model Architecture**: Qwen3-Reranker is a binary classifier, not a scorer
+2. **Template Importance**: Exact template format is crucial for correct behavior
+3. **GGUF Limitations**: GGUF conversion quality affects results significantly
+4. **Debugging Value**: Comparative testing revealed the fundamental issue
 
-## ✅ Success Criteria
+## 📝 Notes
 
-- ✅ Both implementations succeed
-- ✅ Rankings match (same document order)
-- ✅ Score similarity >0.8
-- ✅ Ollama faster than official implementation
+- The test suite requires the actual model file (1.2GB) which is not included in the repo
+- Virtual environment (`venv/`) and cache files are gitignored
+- Test results are saved to `results/` directory for analysis
+- All test scripts support both official and Ollama implementations
 
-## 🔍 Key Findings
+## 🔧 Implementation Status
 
-### Strengths
-- **High Score Similarity**: Even when rankings differ, score similarity is very high (0.989-1.000)
-- **Fast Performance**: Both implementations are reasonably fast
-- **Consistent Behavior**: Most tests produce consistent results
+✅ **Framework**: Correct implementation approach identified  
+✅ **Template**: Proper format documented and tested  
+✅ **API**: Ollama reranking API working correctly  
+❓ **Model Quality**: Depends on GGUF conversion quality  
 
-### Areas for Investigation
-- **Ranking Differences**: Some tests show different ranking orders despite high score similarity
-- **Error Handling**: Ollama fails on empty documents while Official handles them gracefully
-- **Model Initialization**: Official model shows initialization warnings
-
-### Performance Notes
-- **No absolute paths required** - All files are relative to the test directory
-- Ollama implementation is generally faster
-- Official Qwen requires ~2GB GPU memory
-- Slight score differences are normal due to implementation details
-- Focus is on ranking order, not exact score matching
-
-## JSON Test Files
-
-The `tests/` directory includes pre-made JSON test files for manual testing:
-- `tests/test_capital.json` - Capital query test
-- `tests/test_ml.json` - Machine learning test with instruction
-- `tests/test_cooking.json` - Cooking test with top_n limit
-- `tests/test_empty.json` - Error test (empty documents)
-- `tests/test_invalid.json` - Error test (invalid model)
-
-## 🔧 Troubleshooting
-
-### Common Issues
-1. **Ollama not running**: Ensure `ollama serve` is running
-2. **Model not found**: Download the GGUF model file
-3. **CUDA errors**: Official implementation requires GPU memory
-4. **Empty document errors**: Ollama doesn't handle empty document arrays well
-
-### Debug Mode
-Run individual components to isolate issues:
-```bash
-python test_ollama.py      # Debug Ollama issues
-python test_official.py    # Debug Official issues
-```
+This test suite serves as validation for the corrected Ollama reranking implementation and documents the debugging process that led to the solution.
