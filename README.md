@@ -10,9 +10,11 @@ The project has been split into modular components for better organization:
 - `test_ollama.py` - Tests only Ollama implementation
 - `test_official.py` - Tests only Official Qwen3-Reranker
 - `compare_results.py` - Compares results from both implementations
+- `show_config.py` - Shows current model configuration
 - `requirements.txt` - Python dependencies
 - `run_test.sh` - One-click test runner
 - `Modelfile` - F16 model template
+- `.env` - Model configuration (not tracked in git)
 - `Qwen3-Reranker-0.6B.f16.gguf` - GGUF model file (download required)
 - `tests/` - Test cases directory
   - `test_*.json` - JSON test files for manual Ollama testing
@@ -39,9 +41,32 @@ pip install -r requirements.txt
 # Download the GGUF model (if not already present)
 wget https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
 
+# Configure model name (optional - defaults to qwen_reranker_v2)
+echo "MODEL_NAME=qwen_reranker_v2" > .env
+
 # Ensure Ollama is running with reranking model
 OLLAMA_NEW_ENGINE=1 ollama serve
 ollama create qwen_reranker_v2 -f Modelfile  # F16 model required
+```
+
+## 🔧 Configuration
+
+The model name is configured via environment variables:
+
+### Using .env file (Recommended)
+Create a `.env` file in the project root:
+```bash
+MODEL_NAME=qwen_reranker_v2
+```
+
+### Using environment variable
+```bash
+export MODEL_NAME=qwen_reranker_v2
+```
+
+### Check current configuration
+```bash
+python show_config.py
 ```
 
 ## 🚀 Running Tests

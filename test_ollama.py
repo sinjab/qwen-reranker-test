@@ -9,6 +9,14 @@ import requests
 import time
 import os
 import glob
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+def get_model_name():
+    """Get model name from environment variable or use default"""
+    return os.getenv("MODEL_NAME", "qwen_reranker_v2")
 
 def load_test_cases():
     """Load test cases from JSON files in tests/ directory"""
@@ -50,8 +58,11 @@ def test_ollama_reranker(test_case):
     """Test Ollama reranking API"""
     url = "http://localhost:11434/api/rerank"
     
+    # Use model from test case if specified, otherwise use from .env
+    model_name = test_case.get("model", get_model_name())
+    
     payload = {
-        "model": "qwen_reranker_v2",
+        "model": model_name,
         "query": test_case["query"],
         "documents": test_case["documents"]
     }
