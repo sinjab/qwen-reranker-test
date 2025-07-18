@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Official Qwen3-Reranker Test using GGUF Model
-Tests the GGUF model directly using llama-cpp-python
+Official Qwen3-Reranker Test using Real Transformers Implementation
+Tests the actual official Qwen3-Reranker model using Transformers library
 """
 
 import json
 import time
 import os
 import glob
-from llama_cpp import Llama
+import torch
+from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
 import numpy as np
 
 def load_test_cases():
@@ -47,29 +48,75 @@ def load_test_cases():
     
     return test_cases
 
-def load_gguf_model():
-    """Load GGUF model once"""
-    model_path = "Qwen3-Reranker-0.6B.f16.gguf"
-    if not os.path.exists(model_path):
-        return None, f"GGUF model file not found: {model_path}"
-    
+def load_real_model():
+    """Load real Qwen3-Reranker model using Transformers"""
     try:
-        model = Llama(
-            model_path=model_path,
-            n_ctx=2048,  # Context window
-            n_threads=4,  # Number of CPU threads
-            n_gpu_layers=0,  # Use CPU only for now
-            verbose=False
-        )
-        return model, None
+        print("📦 Loading real Qwen3-Reranker model...")
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-Reranker-0.6B", padding_side='left')
+        model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-Reranker-0.6B").eval()
+        
+        # Get token IDs for yes/no
+        token_false_id = tokenizer.convert_tokens_to_ids("no")
+        token_true_id = tokenizer.convert_tokens_to_ids("yes")
+        
+        # Setup template tokens
+        max_length = 8192
+        prefix = "<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n<|im_start|>user\n"
+        suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        prefix_tokens = tokenizer.encode(prefix, add_special_tokens=False)
+        suffix_tokens = tokenizer.encode(suffix, add_special_tokens=False)
+        
+        return {
+            'tokenizer': tokenizer,
+            'model': model,
+            'token_false_id': token_false_id,
+            'token_true_id': token_true_id,
+            'max_length': max_length,
+            'prefix_tokens': prefix_tokens,
+            'suffix_tokens': suffix_tokens
+        }, None
+        
     except Exception as e:
         return None, str(e)
 
-def test_official_qwen(test_case, model):
-    """Test GGUF Qwen3-Reranker"""
+def format_instruction(instruction, query, doc):
+    """Format instruction for the model"""
+    if instruction is None:
+        instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+    output = "<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {doc}".format(
+        instruction=instruction, query=query, doc=doc
+    )
+    return output
+
+def process_inputs(pairs, tokenizer, prefix_tokens, suffix_tokens, max_length, model):
+    """Process inputs for the model"""
+    inputs = tokenizer(
+        pairs, padding=False, truncation='longest_first',
+        return_attention_mask=False, max_length=max_length - len(prefix_tokens) - len(suffix_tokens)
+    )
+    for i, ele in enumerate(inputs['input_ids']):
+        inputs['input_ids'][i] = prefix_tokens + ele + suffix_tokens
+    inputs = tokenizer.pad(inputs, padding=True, return_tensors="pt", max_length=max_length)
+    for key in inputs:
+        inputs[key] = inputs[key].to(model.device)
+    return inputs
+
+def compute_logits(inputs, model, token_true_id, token_false_id, **kwargs):
+    """Compute logits and convert to probabilities"""
+    batch_scores = model(**inputs).logits[:, -1, :]
+    true_vector = batch_scores[:, token_true_id]
+    false_vector = batch_scores[:, token_false_id]
+    batch_scores = torch.stack([false_vector, true_vector], dim=1)
+    batch_scores = torch.nn.functional.log_softmax(batch_scores, dim=1)
+    scores = batch_scores[:, 1].exp().tolist()
+    return scores
+
+def test_official_qwen(test_case, model_info):
+    """Test real Qwen3-Reranker using Transformers"""
     try:
         query = test_case["query"]
         documents = test_case["documents"]
+        instruction = test_case.get("instruction", "Given a web search query, retrieve relevant passages that answer the query")
         
         # Handle empty documents case
         if not documents:
@@ -80,53 +127,41 @@ def test_official_qwen(test_case, model):
                 "error": None
             }
         
-        # Process documents one by one
-        results = []
+        # Process documents
         start_time = time.time()
         
-        for idx, doc in enumerate(documents):
-            # Create prompt for reranking (similar to Modelfile template)
-            prompt = f"""Query: {query}
-Document: {doc}
-Relevance score (0-10):"""
-            
-            # Generate response
-            response = model(
-                prompt,
-                max_tokens=10,  # We only need a short response
-                temperature=0.0,  # Deterministic output
-                stop=["<|im_start|>", "<|im_end|>", "\n"],  # Stop tokens
-                echo=False
-            )
-            
-            # Extract score from response
-            response_text = response['choices'][0]['text'].strip()
-            
-            # Try to extract numeric score
-            try:
-                # Look for numbers in the response
-                import re
-                numbers = re.findall(r'\d+(?:\.\d+)?', response_text)
-                if numbers:
-                    score = float(numbers[0])
-                    # Normalize to 0-1 range if needed
-                    if score > 1:
-                        score = score / 10.0
-                else:
-                    # Fallback: use response length as proxy
-                    score = len(response_text) / 100.0
-            except:
-                # Fallback score
-                score = 0.5
-            
+        # Create pairs for all documents
+        pairs = [format_instruction(instruction, query, doc) for doc in documents]
+        
+        # Process inputs
+        inputs = process_inputs(
+            pairs, 
+            model_info['tokenizer'], 
+            model_info['prefix_tokens'], 
+            model_info['suffix_tokens'], 
+            model_info['max_length'], 
+            model_info['model']
+        )
+        
+        # Compute scores
+        scores = compute_logits(
+            inputs, 
+            model_info['model'], 
+            model_info['token_true_id'], 
+            model_info['token_false_id']
+        )
+        
+        elapsed = time.time() - start_time
+        
+        # Create results
+        results = []
+        for idx, (doc, score) in enumerate(zip(documents, scores)):
             results.append({
                 "index": idx,
                 "document": doc,
                 "relevance_score": score,
-                "raw_response": response_text
+                "raw_response": f"{score:.4f}"
             })
-        
-        elapsed = time.time() - start_time
         
         # Sort by score (descending)
         results.sort(key=lambda x: x["relevance_score"], reverse=True)
@@ -151,18 +186,18 @@ Relevance score (0-10):"""
         }
 
 def main():
-    """Run GGUF Qwen3-Reranker tests only"""
-    print("🤖 GGUF Qwen3-Reranker Test")
-    print("=" * 40)
+    """Run real Qwen3-Reranker tests only"""
+    print("🤖 REAL QWEN3-RERANKER TEST (Transformers)")
+    print("=" * 50)
     
     # Load model once
-    print("📦 Loading GGUF model...")
-    model, error = load_gguf_model()
+    model_info, error = load_real_model()
     if error:
         print(f"❌ Failed to load model: {error}")
         return
     
     print("✅ Model loaded successfully")
+    print(f"🎯 Token IDs: false={model_info['token_false_id']}, true={model_info['token_true_id']}")
     
     results = {}
     test_cases = load_test_cases()
@@ -172,24 +207,24 @@ def main():
         print(f"Query: {test_case['query']}")
         print(f"Documents: {len(test_case['documents'])}")
         
-        # Test GGUF
-        print("🤖 Testing GGUF Qwen3-Reranker...")
-        gguf_result = test_official_qwen(test_case, model)
+        # Test real implementation
+        print("🤖 Testing Real Qwen3-Reranker...")
+        real_result = test_official_qwen(test_case, model_info)
         
         results[test_case["name"]] = {
             "test_case": test_case,
-            "result": gguf_result
+            "result": real_result
         }
         
         # Print summary
-        print(f"✅ GGUF: {'SUCCESS' if gguf_result['success'] else 'FAILED'} ({gguf_result['time']:.3f}s)")
+        print(f"✅ Real: {'SUCCESS' if real_result['success'] else 'FAILED'} ({real_result['time']:.3f}s)")
         
-        if gguf_result.get("error"):
-            print(f"❌ GGUF Error: {gguf_result['error']}")
+        if real_result.get("error"):
+            print(f"❌ Real Error: {real_result['error']}")
         
-        if gguf_result["success"] and gguf_result["results"]:
+        if real_result["success"] and real_result["results"]:
             print("📈 Rankings:")
-            for i, result in enumerate(gguf_result["results"]):
+            for i, result in enumerate(real_result["results"]):
                 doc = result["document"]
                 score = result["relevance_score"]
                 raw_response = result.get("raw_response", "")
@@ -201,21 +236,22 @@ def main():
     os.makedirs("results", exist_ok=True)
     
     # Save results
-    results_file = "results/official_results.json"
-    with open(results_file, "w") as f:
+    output_file = "results/official_results.json"
+    with open(output_file, 'w') as f:
         json.dump(results, f, indent=2)
     
-    print(f"\n💾 Results saved to: {results_file}")
+    print(f"\n💾 Results saved to: {output_file}")
     
-    # Summary
-    print("\n📊 SUMMARY")
-    print("=" * 40)
-    total_tests = len(test_cases)
+    # Print summary
     successful_tests = sum(1 for r in results.values() if r["result"]["success"])
+    total_tests = len(results)
     
+    print(f"\n📊 SUMMARY")
+    print("=" * 40)
     print(f"Total Tests: {total_tests}")
     print(f"Successful Tests: {successful_tests}")
     print(f"Success Rate: {successful_tests/total_tests*100:.1f}%")
+    print("✅ Real tests completed")
 
 if __name__ == "__main__":
     main() 

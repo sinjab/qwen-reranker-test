@@ -1,27 +1,63 @@
 #!/usr/bin/env python3
 """
-Test ambiguous/uncertain cases for reranker
+Ambiguous Case Testing - Real Official Implementation
+===================================================
+
+Test ambiguous cases with the real Qwen3-Reranker using Transformers.
+This provides the ground truth for comparison with Ollama's implementation.
 """
 
-import json
-import time
-import os
-from llama_cpp import Llama
+import torch
+from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
+
+def format_instruction(instruction, query, doc):
+    if instruction is None:
+        instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+    output = "<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {doc}".format(instruction=instruction,query=query, doc=doc)
+    return output
+
+def process_inputs(pairs, tokenizer, prefix_tokens, suffix_tokens, max_length, model):
+    inputs = tokenizer(
+        pairs, padding=False, truncation='longest_first',
+        return_attention_mask=False, max_length=max_length - len(prefix_tokens) - len(suffix_tokens)
+    )
+    for i, ele in enumerate(inputs['input_ids']):
+        inputs['input_ids'][i] = prefix_tokens + ele + suffix_tokens
+    inputs = tokenizer.pad(inputs, padding=True, return_tensors="pt", max_length=max_length)
+    for key in inputs:
+        inputs[key] = inputs[key].to(model.device)
+    return inputs
+
+def compute_logits(inputs, model, token_true_id, token_false_id, **kwargs):
+    batch_scores = model(**inputs).logits[:, -1, :]
+    true_vector = batch_scores[:, token_true_id]
+    false_vector = batch_scores[:, token_false_id]
+    batch_scores = torch.stack([false_vector, true_vector], dim=1)
+    batch_scores = torch.nn.functional.log_softmax(batch_scores, dim=1)
+    scores = batch_scores[:, 1].exp().tolist()
+    return scores
 
 def test_ambiguous_cases():
-    """Test cases where reranker might be uncertain"""
+    """Test ambiguous cases with real implementation"""
+    print("🧪 AMBIGUOUS CASE TESTING - REAL OFFICIAL")
+    print("=" * 60)
     
-    # Load model
-    model_path = "Qwen3-Reranker-0.6B.f16.gguf"
-    model = Llama(
-        model_path=model_path,
-        n_ctx=2048,
-        n_threads=4,
-        n_gpu_layers=0,
-        verbose=False
-    )
+    # Load the real model
+    print("📦 Loading real Qwen3-Reranker model...")
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-Reranker-0.6B", padding_side='left')
+    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-Reranker-0.6B").eval()
     
-    # Test cases with varying degrees of relevance
+    token_false_id = tokenizer.convert_tokens_to_ids("no")
+    token_true_id = tokenizer.convert_tokens_to_ids("yes")
+    max_length = 8192
+    prefix = "<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n<|im_start|>user\n"
+    suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    prefix_tokens = tokenizer.encode(prefix, add_special_tokens=False)
+    suffix_tokens = tokenizer.encode(suffix, add_special_tokens=False)
+    
+    print("✅ Model loaded successfully!")
+    
+    # Define ambiguous test cases
     test_cases = [
         {
             "name": "Ambiguous Technology Query",
@@ -29,20 +65,20 @@ def test_ambiguous_cases():
             "documents": [
                 "Optimize database queries for faster execution.",
                 "Use caching mechanisms to reduce load times.",
-                "Clean your computer screen regularly.",
                 "Upgrade hardware components like RAM and CPU.",
-                "Write efficient algorithms and data structures."
+                "Write efficient algorithms and data structures.",
+                "Clean your computer screen regularly."
             ]
         },
         {
             "name": "Partial Relevance",
             "query": "Best restaurants in Paris",
             "documents": [
-                "Le Bernardin is a famous French restaurant in New York.",
                 "Paris has many excellent bistros and cafes.",
-                "The Eiffel Tower is a popular tourist attraction.",
                 "French cuisine is known for its sophistication.",
-                "Booking tables in advance is recommended."
+                "Booking tables in advance is recommended.",
+                "Le Bernardin is a famous French restaurant in New York.",
+                "The Eiffel Tower is a popular tourist attraction."
             ]
         },
         {
@@ -51,9 +87,9 @@ def test_ambiguous_cases():
             "documents": [
                 "Global warming is causing ice caps to melt.",
                 "Weather patterns are becoming more unpredictable.",
-                "My cat likes to sleep in the sun.",
                 "Rising sea levels threaten coastal cities.",
-                "Environmental protection is important for future generations."
+                "Environmental protection is important for future generations.",
+                "My cat likes to sleep in the sun."
             ]
         },
         {
@@ -61,67 +97,36 @@ def test_ambiguous_cases():
             "query": "Machine learning optimization",
             "documents": [
                 "Gradient descent is an optimization algorithm.",
+                "Hyperparameter tuning improves model performance.",
                 "Neural networks require careful tuning.",
                 "Coffee helps programmers stay awake.",
-                "Deep learning models need large datasets.",
-                "Hyperparameter tuning improves model performance."
+                "Deep learning models need large datasets."
             ]
         }
     ]
     
-    print("🧪 AMBIGUOUS CASE TESTING - OFFICIAL")
-    print("=" * 60)
+    task = 'Given a web search query, retrieve relevant passages that answer the query'
     
     for test_case in test_cases:
         print(f"\n🔍 {test_case['name']}")
         print(f"Query: {test_case['query']}")
         print("-" * 40)
         
-        results = []
-        for idx, doc in enumerate(test_case['documents']):
-            # Create prompt (same as Modelfile template)
-            prompt = f"""Query: {test_case['query']}
-Document: {doc}
-Relevance score (0-10):"""
-            
-            # Generate response
-            response = model(
-                prompt,
-                max_tokens=10,
-                temperature=0.0,
-                stop=["<|im_start|>", "<|im_end|>", "\n"],
-                echo=False
-            )
-            
-            # Extract score
-            raw_text = response['choices'][0]['text'].strip()
-            import re
-            numbers = re.findall(r'\d+(?:\.\d+)?', raw_text)
-            
-            if numbers:
-                score = float(numbers[0])
-                if score > 1:
-                    score = score / 10.0
-            else:
-                score = 0.0
-            
-            results.append({
-                'index': idx,
-                'document': doc,
-                'score': score,
-                'raw': raw_text
-            })
+        query = test_case["query"]
+        documents = test_case["documents"]
         
-        # Sort by score descending
-        results.sort(key=lambda x: x['score'], reverse=True)
+        pairs = [format_instruction(task, query, doc) for doc in documents]
         
-        # Display results
-        for i, result in enumerate(results):
-            print(f"  {i+1}. [{result['score']:.2f}] {result['document'][:50]}...")
-            print(f"      Raw: '{result['raw']}'")
-    
+        # Tokenize the input texts
+        inputs = process_inputs(pairs, tokenizer, prefix_tokens, suffix_tokens, max_length, model)
+        scores = compute_logits(inputs, model, token_true_id, token_false_id)
+        
+        # Show results with documents
+        for i, (doc, score) in enumerate(zip(documents, scores)):
+            print(f"  {i+1}. [{score:.4f}] {doc[:50]}...")
+            
     print("\n" + "=" * 60)
-    print("🎯 Look for intermediate scores (not just 0.0 or 1.0)")
+    print("🎯 These are the REAL official scores for ambiguous cases!")
 
 if __name__ == "__main__":
     test_ambiguous_cases()
