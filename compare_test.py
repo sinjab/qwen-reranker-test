@@ -7,41 +7,46 @@ Compares Ollama implementation vs Official Qwen3-Reranker using same JSON test c
 import json
 import requests
 import time
+import os
+import glob
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 
-# Test cases (same as Ollama JSON tests)
-TEST_CASES = [
-    {
-        "name": "capital_test",
-        "query": "What is the capital of China?",
-        "documents": [
-            "The capital of China is Beijing.",
-            "China is a large country in Asia.",
-            "Paris is the capital of France."
-        ]
-    },
-    {
-        "name": "ml_test", 
-        "query": "What is machine learning?",
-        "documents": [
-            "Machine learning is a subset of artificial intelligence.",
-            "The weather today is sunny.",
-            "Deep learning uses neural networks."
-        ],
-        "instruction": "Find AI topics"
-    },
-    {
-        "name": "cooking_test",
-        "query": "How to cook pasta?",
-        "documents": [
-            "Boil water, add pasta, cook 8-12 minutes.",
-            "Pasta is made from wheat flour.",
-            "Italy is famous for pasta."
-        ],
-        "top_n": 2
-    }
-]
+def load_test_cases():
+    """Load test cases from JSON files in tests/ directory"""
+    test_cases = []
+    test_files = glob.glob("tests/test_*.json")
+    
+    for test_file in sorted(test_files):
+        try:
+            with open(test_file, 'r') as f:
+                test_data = json.load(f)
+                
+            # Extract test case name from filename
+            test_name = os.path.splitext(os.path.basename(test_file))[0]
+            
+            # Create test case structure
+            test_case = {
+                "name": test_name,
+                "file": test_file,
+                "query": test_data.get("query", ""),
+                "documents": test_data.get("documents", [])
+            }
+            
+            # Add optional parameters if present
+            if "instruction" in test_data:
+                test_case["instruction"] = test_data["instruction"]
+            if "top_n" in test_data:
+                test_case["top_n"] = test_data["top_n"]
+            if "model" in test_data:
+                test_case["model"] = test_data["model"]
+                
+            test_cases.append(test_case)
+            
+        except Exception as e:
+            print(f"⚠️  Warning: Could not load {test_file}: {e}")
+    
+    return test_cases
 
 def test_ollama_reranker(test_case):
     """Test Ollama reranking API"""
@@ -193,7 +198,9 @@ def main():
     
     results = {}
     
-    for test_case in TEST_CASES:
+    test_cases = load_test_cases()
+    
+    for test_case in test_cases:
         print(f"\n📋 Testing: {test_case['name']}")
         print(f"Query: {test_case['query']}")
         print(f"Documents: {len(test_case['documents'])}")
@@ -233,16 +240,20 @@ def main():
         if official_result.get("error"):
             print(f"❌ Official Error: {official_result['error']}")
     
+    # Create results directory if it doesn't exist
+    os.makedirs("results", exist_ok=True)
+    
     # Save results
-    with open("comparison_results.json", "w") as f:
+    results_file = "results/comparison_results.json"
+    with open(results_file, "w") as f:
         json.dump(results, f, indent=2)
     
-    print(f"\n💾 Results saved to: comparison_results.json")
+    print(f"\n💾 Results saved to: {results_file}")
     
     # Summary
     print("\n📊 SUMMARY")
     print("=" * 50)
-    total_tests = len(TEST_CASES)
+    total_tests = len(test_cases)
     successful_tests = sum(1 for r in results.values() if r["ollama"]["success"] and r["official"]["success"])
     ranking_matches = sum(1 for r in results.values() if r["comparison"]["ranking_match"])
     

@@ -8,14 +8,29 @@ Compare Ollama implementation vs Official Qwen3-Reranker using identical JSON te
 - `requirements.txt` - Python dependencies
 - `run_test.sh` - One-click test runner
 - `Modelfile` - F16 model template
-- `Qwen3-Reranker-0.6B.f16.gguf` - GGUF model file
-- `test_*.json` - JSON test files for manual Ollama testing
+- `Qwen3-Reranker-0.6B.f16.gguf` - GGUF model file (download required)
+- `tests/` - Test cases directory
+  - `test_*.json` - JSON test files for manual Ollama testing
+- `results/` - Generated results (not tracked in git)
+
+## Model Download
+
+The GGUF model file is required but not included in the repository due to size. Download it from:
+
+```bash
+wget https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
+```
+
+**Direct URL**: https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
 
 ## Quick Setup
 
 ```bash
 # Install dependencies
 pip install -r requirements.txt
+
+# Download the GGUF model (if not already present)
+wget https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
 
 # Ensure Ollama is running with reranking model
 OLLAMA_NEW_ENGINE=1 ollama serve
@@ -37,9 +52,9 @@ python3 compare_test.py
 **Option 3: Manual Ollama testing**
 ```bash
 # Test individual JSON files
-curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @test_capital.json
-curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @test_ml.json
-curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @test_cooking.json
+curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @tests/test_capital.json
+curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @tests/test_ml.json
+curl -X POST http://localhost:11434/api/rerank -H "Content-Type: application/json" -d @tests/test_cooking.json
 ```
 
 ## Test Cases
@@ -62,7 +77,7 @@ Uses the same JSON test cases as the Ollama implementation:
 
 ## Files Generated
 
-- `comparison_results.json` - Detailed comparison results
+- `results/comparison_results.json` - Detailed comparison results
 
 ## Success Criteria
 
@@ -81,9 +96,9 @@ Uses the same JSON test cases as the Ollama implementation:
 
 ## JSON Test Files
 
-The directory includes pre-made JSON test files for manual testing:
-- `test_capital.json` - Capital query test
-- `test_ml.json` - Machine learning test with instruction
-- `test_cooking.json` - Cooking test with top_n limit
-- `test_empty.json` - Error test (empty documents)
-- `test_invalid.json` - Error test (invalid model)
+The `tests/` directory includes pre-made JSON test files for manual testing:
+- `tests/test_capital.json` - Capital query test
+- `tests/test_ml.json` - Machine learning test with instruction
+- `tests/test_cooking.json` - Cooking test with top_n limit
+- `tests/test_empty.json` - Error test (empty documents)
+- `tests/test_invalid.json` - Error test (invalid model)

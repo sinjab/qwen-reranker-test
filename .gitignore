@@ -159,13 +159,16 @@ logs/
 
 # Data files
 *.csv
-*.json
 *.jsonl
 *.parquet
 *.h5
 *.hdf5
 *.pkl
 *.pickle
+
+# Test files (track these)
+!tests/*.json
+!test_*.json
 
 # OS generated files
 .DS_Store
@@ -189,9 +192,9 @@ Thumbs.db
 
 # Project specific
 comparison_results.json
+results/
 test_results/
 outputs/
-results/
 
 # Ollama specific
 .ollama/
