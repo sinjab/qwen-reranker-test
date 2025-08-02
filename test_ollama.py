@@ -58,6 +58,8 @@ def load_test_cases():
                 test_case["top_n"] = test_data["top_n"]
             if "model" in test_data:
                 test_case["model"] = test_data["model"]
+            if "_test_metadata" in test_data:
+                test_case["_test_metadata"] = test_data["_test_metadata"]
                 
             test_cases.append(test_case)
             
@@ -123,16 +125,34 @@ def main():
         print("⚡ Testing Ollama...")
         ollama_result = test_ollama_reranker(test_case)
         
+        # Check if this test is expected to fail
+        expected_to_fail = test_case.get("_test_metadata", {}).get("expected_to_fail", False)
+        
+        # Determine if test passed based on expectations
+        test_passed = False
+        if expected_to_fail:
+            # For expected failures, success means it actually failed
+            test_passed = not ollama_result['success']
+            status = "SUCCESS (Expected Failure)" if test_passed else "FAILED (Should Have Failed)"
+        else:
+            # For normal tests, success means it actually succeeded
+            test_passed = ollama_result['success']
+            status = "SUCCESS" if test_passed else "FAILED"
+
         results[test_case["name"]] = {
             "test_case": test_case,
-            "result": ollama_result
+            "result": ollama_result,
+            "test_passed": test_passed
         }
         
         # Print summary
-        print(f"✅ Ollama: {'SUCCESS' if ollama_result['success'] else 'FAILED'} ({ollama_result['time']:.3f}s)")
+        print(f"✅ Ollama: {status} ({ollama_result['time']:.3f}s)")
         
         if ollama_result.get("error"):
-            print(f"❌ Ollama Error: {ollama_result['error']}")
+            if expected_to_fail:
+                print(f"✅ Expected Error: {ollama_result['error']}")
+            else:
+                print(f"❌ Ollama Error: {ollama_result['error']}")
         
         if ollama_result["success"] and ollama_result["results"]:
             print("📈 Rankings:")
@@ -155,7 +175,7 @@ def main():
     print("\n📊 SUMMARY")
     print("=" * 40)
     total_tests = len(test_cases)
-    successful_tests = sum(1 for r in results.values() if r["result"]["success"])
+    successful_tests = sum(1 for r in results.values() if r.get("test_passed", False))
     
     print(f"Total Tests: {total_tests}")
     print(f"Successful Tests: {successful_tests}")
